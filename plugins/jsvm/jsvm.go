@@ -548,3 +548,42 @@ func filesContent(dirPath string, pattern string) (map[string][]byte, error) {
 
 	return result, nil
 }
+
+// 执行指定的 JavaScript 文件
+func RunJSFile(app core.App, filepath string) error {
+	vm := goja.New()
+
+	// 共享的 registry
+	requireRegistry := new(require.Registry)
+	templateRegistry := template.NewRegistry()
+
+	// 添加标准绑定
+	requireRegistry.Enable(vm)
+	console.Enable(vm)
+	process.Enable(vm)
+	buffer.Enable(vm)
+
+	baseBinds(vm)
+	dbxBinds(vm)
+	filesystemBinds(vm)
+	securityBinds(vm)
+	osBinds(vm)
+	filepathBinds(vm)
+	httpClientBinds(vm)
+	formsBinds(vm)
+	apisBinds(vm)
+	mailsBinds(vm)
+
+	// 注入全局变量
+	vm.Set("$app", app)
+	vm.Set("$template", templateRegistry)
+
+	// 读取并执行文件
+	content, err := os.ReadFile(filepath)
+	if err != nil {
+		return fmt.Errorf("读取文件失败: %v", err)
+	}
+
+	_, err = vm.RunScript(filepath, string(content))
+	return err
+}
