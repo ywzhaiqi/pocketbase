@@ -28,9 +28,9 @@ func bindRecordCrudApi(app core.App, rg *router.RouterGroup[*core.RequestEvent])
 	subGroup := rg.Group("/collections/{collection}/records").Unbind(DefaultRateLimitMiddlewareId)
 	subGroup.GET("", recordsList)
 	subGroup.GET("/{id}", recordView)
-	subGroup.POST("", recordCreate(nil)).Bind(dynamicCollectionBodyLimit(""))
-	subGroup.PATCH("/{id}", recordUpdate(nil)).Bind(dynamicCollectionBodyLimit(""))
-	subGroup.DELETE("/{id}", recordDelete(nil))
+	subGroup.POST("", recordCreate(true, nil)).Bind(dynamicCollectionBodyLimit(""))
+	subGroup.PATCH("/{id}", recordUpdate(true, nil)).Bind(dynamicCollectionBodyLimit(""))
+	subGroup.DELETE("/{id}", recordDelete(true, nil))
 }
 
 func recordsList(e *core.RequestEvent) error {
@@ -79,6 +79,11 @@ func recordsList(e *core.RequestEvent) error {
 
 	searchProvider := search.NewProvider(fieldsResolver).Query(query)
 
+	// use rowid when available to minimize the need of a covering index with the "id" field
+	if !collection.IsView() {
+		searchProvider.CountCol("_rowid_")
+	}
+
 	records := []*core.Record{}
 	result, err := searchProvider.ParseAndExec(e.Request.URL.Query().Encode(), &records)
 	if err != nil {
@@ -116,7 +121,9 @@ func recordsList(e *core.RequestEvent) error {
 			randomizedThrottle(150)
 		}
 
-		return e.JSON(http.StatusOK, e.Result)
+		return execAfterSuccessTx(true, e.App, func() error {
+			return e.JSON(http.StatusOK, e.Result)
+		})
 	})
 }
 
@@ -187,11 +194,13 @@ func recordView(e *core.RequestEvent) error {
 			return firstApiError(err, e.InternalServerError("Failed to enrich record", err))
 		}
 
-		return e.JSON(http.StatusOK, e.Record)
+		return execAfterSuccessTx(true, e.App, func() error {
+			return e.JSON(http.StatusOK, e.Record)
+		})
 	})
 }
 
-func recordCreate(optFinalizer func(data any) error) func(e *core.RequestEvent) error {
+func recordCreate(responseWriteAfterTx bool, optFinalizer func(data any) error) func(e *core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		collection, err := e.App.FindCachedCollectionByNameOrId(e.Request.PathValue("collection"))
 		if err != nil || collection == nil {
@@ -291,7 +300,7 @@ func recordCreate(optFinalizer func(data any) error) func(e *core.RequestEvent) 
 
 			// check non-empty create rule
 			if *dummyCollection.CreateRule != "" {
-				ruleQuery := e.App.DB().Select("(1)").PreFragment(withFrom).From(dummyCollection.Name).AndBind(dummyParams)
+				ruleQuery := e.App.ConcurrentDB().Select("(1)").PreFragment(withFrom).From(dummyCollection.Name).AndBind(dummyParams)
 
 				resolver := core.NewRecordFieldResolver(e.App, &dummyCollection, requestInfo, true)
 
@@ -311,7 +320,7 @@ func recordCreate(optFinalizer func(data any) error) func(e *core.RequestEvent) 
 			}
 
 			// check for manage rule access
-			manageRuleQuery := e.App.DB().Select("(1)").PreFragment(withFrom).From(dummyCollection.Name).AndBind(dummyParams)
+			manageRuleQuery := e.App.ConcurrentDB().Select("(1)").PreFragment(withFrom).From(dummyCollection.Name).AndBind(dummyParams)
 			if !form.HasManageAccess() &&
 				hasAuthManageAccess(e.App, requestInfo, &dummyCollection, manageRuleQuery) {
 				form.GrantManagerAccess()
@@ -339,7 +348,9 @@ func recordCreate(optFinalizer func(data any) error) func(e *core.RequestEvent) 
 				return firstApiError(err, e.InternalServerError("Failed to enrich record", err))
 			}
 
-			err = e.JSON(http.StatusOK, e.Record)
+			err = execAfterSuccessTx(responseWriteAfterTx, e.App, func() error {
+				return e.JSON(http.StatusOK, e.Record)
+			})
 			if err != nil {
 				return err
 			}
@@ -369,7 +380,7 @@ func recordCreate(optFinalizer func(data any) error) func(e *core.RequestEvent) 
 	}
 }
 
-func recordUpdate(optFinalizer func(data any) error) func(e *core.RequestEvent) error {
+func recordUpdate(responseWriteAfterTx bool, optFinalizer func(data any) error) func(e *core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		collection, err := e.App.FindCachedCollectionByNameOrId(e.Request.PathValue("collection"))
 		if err != nil || collection == nil {
@@ -441,7 +452,7 @@ func recordUpdate(optFinalizer func(data any) error) func(e *core.RequestEvent) 
 		}
 		form.Load(data)
 
-		manageRuleQuery := e.App.DB().Select("(1)").From(collection.Name).AndWhere(dbx.HashExp{
+		manageRuleQuery := e.App.ConcurrentDB().Select("(1)").From(collection.Name).AndWhere(dbx.HashExp{
 			collection.Name + ".id": record.Id,
 		})
 		if !form.HasManageAccess() &&
@@ -470,7 +481,9 @@ func recordUpdate(optFinalizer func(data any) error) func(e *core.RequestEvent) 
 				return firstApiError(err, e.InternalServerError("Failed to enrich record", err))
 			}
 
-			err = e.JSON(http.StatusOK, e.Record)
+			err = execAfterSuccessTx(responseWriteAfterTx, e.App, func() error {
+				return e.JSON(http.StatusOK, e.Record)
+			})
 			if err != nil {
 				return err
 			}
@@ -500,7 +513,7 @@ func recordUpdate(optFinalizer func(data any) error) func(e *core.RequestEvent) 
 	}
 }
 
-func recordDelete(optFinalizer func(data any) error) func(e *core.RequestEvent) error {
+func recordDelete(responseWriteAfterTx bool, optFinalizer func(data any) error) func(e *core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		collection, err := e.App.FindCachedCollectionByNameOrId(e.Request.PathValue("collection"))
 		if err != nil || collection == nil {
@@ -560,7 +573,9 @@ func recordDelete(optFinalizer func(data any) error) func(e *core.RequestEvent) 
 				return firstApiError(err, e.BadRequestError("Failed to delete record. Make sure that the record is not part of a required relation reference.", err))
 			}
 
-			err = e.NoContent(http.StatusNoContent)
+			err = execAfterSuccessTx(responseWriteAfterTx, e.App, func() error {
+				return e.NoContent(http.StatusNoContent)
+			})
 			if err != nil {
 				return err
 			}

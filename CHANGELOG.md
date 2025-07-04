@@ -1,3 +1,63 @@
+## v0.28.4
+
+- Added global JSVM `toBytes()` helper to return the bytes slice representation of a value such as io.Reader or string (_other types are first serialized to Go string_).
+
+- Fixed `security.RandomStringByRegex` random distribution ([#6947](https://github.com/pocketbase/pocketbase/pull/6947); thanks @yerTools).
+
+- Minor docs and typos fixes.
+
+
+## v0.28.3
+
+- Skip sending empty `Range` header when fetching blobs from S3 ([#6914](https://github.com/pocketbase/pocketbase/pull/6914)).
+
+- Updated Go deps and particularly `modernc.org/sqlite` to 1.38.0 (SQLite 3.50.1).
+
+- Bumped GitHub action min Go version to 1.23.10 as it comes with some [minor security `net/http` fixes](https://github.com/golang/go/issues?q=milestone%3AGo1.23.10+label%3ACherryPickApproved).
+
+
+## v0.28.2
+
+- Loaded latin-ext charset for the default text fonts ([#6869](https://github.com/pocketbase/pocketbase/issues/6869)).
+
+- Updated view query CAST regex to properly recognize multiline expressions ([#6860](https://github.com/pocketbase/pocketbase/pull/6860); thanks @azat-ismagilov).
+
+- Updated Go and npm dependencies.
+
+
+## v0.28.1
+
+- Fixed `json_each`/`json_array_length` normalizations to properly check for array values ([#6835](https://github.com/pocketbase/pocketbase/issues/6835)).
+
+
+## v0.28.0
+
+- Write the default response body of `*Request` hooks that are wrapped in a transaction after the related transaction completes to allow propagating the transaction error ([#6462](https://github.com/pocketbase/pocketbase/discussions/6462#discussioncomment-12207818)).
+
+- Updated `app.DB()` to automatically routes raw write SQL statements to the nonconcurrent db pool ([#6689](https://github.com/pocketbase/pocketbase/discussions/6689)).
+    _For the rare cases when it is needed users still have the option to explicitly target the specific pool they want using `app.ConcurrentDB()`/`app.NonconcurrentDB()`._
+
+- ⚠️ Changed the default `json` field max size to 1MB.
+    _Users still have the option to adjust the default limit from the collection field options but keep in mind that storing large strings/blobs in the database is known to cause performance issues and should be avoided when possible._
+
+- ⚠️ Soft-deprecated and replaced `filesystem.System.GetFile(fileKey)` with `filesystem.System.GetReader(fileKey)` to avoid the confusion with `filesystem.File`.
+    _The old method will still continue to work for at least until v0.29.0 but you'll get a console warning to replace it with `GetReader`._
+
+- Added new `filesystem.System.GetReuploadableFile(fileKey, preserveName)` method to return an existing blob as a `*filesystem.File` value ([#6792](https://github.com/pocketbase/pocketbase/discussions/6792)).
+    _This method could be useful in case you want to clone an existing Record file and assign it to a new Record (e.g. in a Record duplicate action)._
+
+- Other minor improvements (updated the GitHub release min Go version to 1.23.9, updated npm and Go deps, etc.)
+
+
+## v0.27.2
+
+- Added workers pool when cascade deleting record files to minimize _"thread exhaustion"_ errors ([#6780](https://github.com/pocketbase/pocketbase/discussions/6780)).
+
+- Updated the `:excerpt` fields modifier to properly account for multibyte characters ([#6778](https://github.com/pocketbase/pocketbase/issues/6778)).
+
+- Use `rowid` as count column for non-view collections to minimize the need of having the id field in a covering index ([#6739](https://github.com/pocketbase/pocketbase/discussions/6739))
+
+
 ## v0.27.1
 
 - Updated example `geoPoint` API preview body data.
