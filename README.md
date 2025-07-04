@@ -49,6 +49,7 @@
         }).
         Bind(Gzip())
     ```
+2. 添加执行 JavaScript 文件命令。`./pocketbase js XXX.js`
 
 
 ## API SDK clients
