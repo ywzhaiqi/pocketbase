@@ -172,6 +172,9 @@ func (pb *PocketBase) Start() error {
 	// register system commands
 	pb.RootCmd.AddCommand(cmd.NewSuperuserCommand(pb))
 	pb.RootCmd.AddCommand(cmd.NewServeCommand(pb, !pb.hideStartBanner, pb.staticRouteEnabled))
+	// add by yyy
+	pb.RootCmd.AddCommand(cmd.NewImportCommand(pb))
+	pb.RootCmd.AddCommand(cmd.NewExportCommand(pb))
 
 	return pb.Execute()
 }
