@@ -23,6 +23,34 @@
 > Please keep in mind that PocketBase is still under active development
 > and therefore full backward compatibility is not guaranteed before reaching v1.0.0.
 
+
+## 我的修改
+
+1. 添加管理界面是否启用开关
+    ```go
+    app := pocketbase.NewWithConfig(pocketbase.Config{
+		StaticRouteEnabled: false,
+	})
+
+    // 添加自定义 dist
+    se.Router.GET("/_/{path...}", Static(ui.DistDirFS, false)).
+        BindFunc(func(e *core.RequestEvent) error {
+            // ignore root path
+            if e.Request.PathValue(StaticWildcardParam) != "" {
+                e.Response.Header().Set("Cache-Control", "max-age=1209600, stale-while-revalidate=86400")
+            }
+
+            // add a default CSP
+            if e.Response.Header().Get("Content-Security-Policy") == "" {
+                e.Response.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' http://127.0.0.1:* https://tile.openstreetmap.org data: blob:; connect-src 'self' http://127.0.0.1:* https://nominatim.openstreetmap.org; script-src 'self' 'sha256-GRUzBA7PzKYug7pqxv5rJaec5bwDCw1Vo6/IXwvD3Tc='")
+            }
+
+            return e.Next()
+        }).
+        Bind(Gzip())
+    ```
+
+
 ## API SDK clients
 
 The easiest way to interact with the PocketBase Web APIs is to use one of the official SDK clients:

@@ -32,11 +32,12 @@ var Version = "(untracked)"
 type PocketBase struct {
 	core.App
 
-	devFlag           bool
-	dataDirFlag       string
-	encryptionEnvFlag string
-	queryTimeout      int
-	hideStartBanner   bool
+	devFlag            bool
+	dataDirFlag        string
+	encryptionEnvFlag  string
+	queryTimeout       int
+	hideStartBanner    bool
+	staticRouteEnabled bool
 
 	// RootCmd is the main console command
 	RootCmd *cobra.Command
@@ -46,6 +47,9 @@ type PocketBase struct {
 type Config struct {
 	// hide the default console server info on app startup
 	HideStartBanner bool
+
+	// StaticRouteEnabled indicates whether to enable the default static route.
+	StaticRouteEnabled bool
 
 	// optional default values for the console flags
 	DefaultDev           bool
@@ -73,7 +77,8 @@ func New() *PocketBase {
 	_, isUsingGoRun := inspectRuntime()
 
 	return NewWithConfig(Config{
-		DefaultDev: isUsingGoRun,
+		DefaultDev:         isUsingGoRun,
+		StaticRouteEnabled: true,
 	})
 }
 
@@ -110,10 +115,11 @@ func NewWithConfig(config Config) *PocketBase {
 				DisableDefaultCmd: true,
 			},
 		},
-		devFlag:           config.DefaultDev,
-		dataDirFlag:       config.DefaultDataDir,
-		encryptionEnvFlag: config.DefaultEncryptionEnv,
-		hideStartBanner:   config.HideStartBanner,
+		devFlag:            config.DefaultDev,
+		dataDirFlag:        config.DefaultDataDir,
+		encryptionEnvFlag:  config.DefaultEncryptionEnv,
+		hideStartBanner:    config.HideStartBanner,
+		staticRouteEnabled: config.StaticRouteEnabled,
 	}
 
 	// replace with a colored stderr writer
@@ -165,7 +171,7 @@ func NewWithConfig(config Config) *PocketBase {
 func (pb *PocketBase) Start() error {
 	// register system commands
 	pb.RootCmd.AddCommand(cmd.NewSuperuserCommand(pb))
-	pb.RootCmd.AddCommand(cmd.NewServeCommand(pb, !pb.hideStartBanner))
+	pb.RootCmd.AddCommand(cmd.NewServeCommand(pb, !pb.hideStartBanner, pb.staticRouteEnabled))
 
 	return pb.Execute()
 }

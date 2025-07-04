@@ -11,7 +11,7 @@ import (
 
 // NewServeCommand creates and returns new command responsible for
 // starting the default PocketBase web server.
-func NewServeCommand(app core.App, showStartBanner bool) *cobra.Command {
+func NewServeCommand(app core.App, showStartBanner bool, staticRouteEnabled bool) *cobra.Command {
 	var allowedOrigins []string
 	var httpAddr string
 	var httpsAddr string
@@ -42,6 +42,7 @@ func NewServeCommand(app core.App, showStartBanner bool) *cobra.Command {
 				ShowStartBanner:    showStartBanner,
 				AllowedOrigins:     allowedOrigins,
 				CertificateDomains: args,
+				StaticRouteEnabled: staticRouteEnabled,
 			})
 
 			if errors.Is(err, http.ErrServerClosed) {
