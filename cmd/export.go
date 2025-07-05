@@ -10,9 +10,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	progressInterval = 2 * time.Second // 进度显示频率
+	fileHeader       = "[\n"
+	fileSeparator    = ",\n"
+	fileFooter       = "\n]"
+)
 // NewExportCommand 创建导出命令
 func NewExportCommand(app core.App) *cobra.Command {
 	var pretty bool // 是否格式化 JSON 输出
+	var batchSize int
 
 	cmd := &cobra.Command{
 		Use:   "export [集合名称] [输出文件]",
@@ -22,18 +29,19 @@ func NewExportCommand(app core.App) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			collectionName := args[0]
 			outputFile := args[1]
-			return exportData(app, collectionName, outputFile, pretty)
+			return exportData(app, collectionName, outputFile, pretty, batchSize)
 		},
 	}
 
 	// 添加格式化输出的标志
 	cmd.Flags().BoolVarP(&pretty, "pretty", "p", false, "是否格式化JSON输出")
+	cmd.Flags().IntVarP(&batchSize, "batch-size", "b", 5000, "每批保存的记录数，默认5000")
 
 	return cmd
 }
 
 // exportData 处理数据导出的主流程
-func exportData(app core.App, collectionName, outputFile string, pretty bool) error {
+func exportData(app core.App, collectionName, outputFile string, pretty bool, batchSize int) error {
 	// 获取目标集合
 	collection, err := app.FindCollectionByNameOrId(collectionName)
 	if err != nil {
@@ -48,7 +56,9 @@ func exportData(app core.App, collectionName, outputFile string, pretty bool) er
 	defer file.Close()
 
 	// 写入文件头部
-	file.WriteString("[\n")
+	if _, err := file.WriteString(fileHeader); err != nil {
+		return fmt.Errorf("写入文件头部失败: %v", err)
+	}
 
 	// 初始化计数器和时间
 	totalCount := 0
@@ -60,18 +70,24 @@ func exportData(app core.App, collectionName, outputFile string, pretty bool) er
 	perPage := batchSize
 	hasMore := true
 
-	// 显示进度的计时器
-	progressTicker := time.NewTicker(2 * time.Second)
+	// 用于安全退出进度显示 goroutine
+	progressDone := make(chan struct{})
+	progressTicker := time.NewTicker(progressInterval)
 	defer progressTicker.Stop()
 
 	// 启动进度显示协程
 	go func() {
-		for range progressTicker.C {
-			elapsed := time.Since(startTime)
-			if totalCount > 0 {
-				avgTime := elapsed.Seconds() / float64(totalCount)
-				fmt.Printf("已处理: %d 条记录, 用时: %.1f秒, 平均: %.3f秒/记录\n",
-					totalCount, elapsed.Seconds(), avgTime)
+		for {
+			select {
+			case <-progressTicker.C:
+				elapsed := time.Since(startTime)
+				if totalCount > 0 {
+					avgSpeed := float64(totalCount) / elapsed.Seconds()
+					fmt.Printf("已处理: %d 条记录, 用时: %.1f秒, 平均: %.3f条/秒\n",
+						totalCount, elapsed.Seconds(), avgSpeed)
+				}
+			case <-progressDone:
+				return
 			}
 		}
 	}()
@@ -80,42 +96,31 @@ func exportData(app core.App, collectionName, outputFile string, pretty bool) er
 	for hasMore {
 		records, err := app.FindRecordsByFilter(collection.Id, "", "", perPage, (page-1)*perPage)
 		if err != nil {
+			close(progressDone)
 			return fmt.Errorf("获取记录失败: %v", err)
 		}
 
-		// 处理当前批次的记录
 		for _, record := range records {
-			// 添加记录分隔符
-			if !isFirstRecord {
-				file.WriteString(",\n")
+			if err := writeRecordToFile(file, record, pretty, isFirstRecord); err != nil {
+				close(progressDone)
+				return err
 			}
 			isFirstRecord = false
-
-			// 将记录转换为JSON并写入文件
-			var jsonData []byte
-			if pretty {
-				jsonData, err = json.MarshalIndent(record, "  ", "  ")
-			} else {
-				jsonData, err = json.Marshal(record)
-			}
-			if err != nil {
-				return fmt.Errorf("JSON编码失败: %v", err)
-			}
-			file.Write(jsonData)
-
 			totalCount++
 		}
 
-		// 检查是否还有更多记录
 		hasMore = len(records) == perPage
 		page++
 	}
 
 	// 写入文件尾部
-	file.WriteString("\n]")
+	if _, err := file.WriteString(fileFooter); err != nil {
+		close(progressDone)
+		return fmt.Errorf("写入文件尾部失败: %v", err)
+	}
 
 	// 停止进度显示
-	progressTicker.Stop()
+	close(progressDone)
 
 	// 显示最终统计信息
 	totalTime := time.Since(startTime)
@@ -123,9 +128,34 @@ func exportData(app core.App, collectionName, outputFile string, pretty bool) er
 	fmt.Printf("总记录数: %d\n", totalCount)
 	fmt.Printf("总用时: %.1f秒\n", totalTime.Seconds())
 	if totalCount > 0 {
-		fmt.Printf("平均速度: %.3f秒/记录\n", totalTime.Seconds()/float64(totalCount))
+		fmt.Printf("平均速度: %.3f条/秒\n", float64(totalCount)/totalTime.Seconds())
 	}
 	fmt.Printf("输出文件: %s\n", outputFile)
 
+	return nil
+}
+
+// writeRecordToFile 将单条记录写入文件，处理分隔符和 JSON 编码
+func writeRecordToFile(file *os.File, record any, pretty, isFirst bool) error {
+	if !isFirst {
+		if _, err := file.WriteString(fileSeparator); err != nil {
+			return fmt.Errorf("写入分隔符失败: %v", err)
+		}
+	}
+	var (
+		jsonData []byte
+		err      error
+	)
+	if pretty {
+		jsonData, err = json.MarshalIndent(record, "  ", "  ")
+	} else {
+		jsonData, err = json.Marshal(record)
+	}
+	if err != nil {
+		return fmt.Errorf("JSON编码失败: %v", err)
+	}
+	if _, err := file.Write(jsonData); err != nil {
+		return fmt.Errorf("写入记录失败: %v", err)
+	}
 	return nil
 }
