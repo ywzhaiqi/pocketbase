@@ -16,26 +16,34 @@ const (
 	fileSeparator    = ",\n"
 	fileFooter       = "\n]"
 )
+
 // NewExportCommand 创建导出命令
 func NewExportCommand(app core.App) *cobra.Command {
 	var pretty bool // 是否格式化 JSON 输出
 	var batchSize int
+	var outputFile string // 输出文件路径
 
 	cmd := &cobra.Command{
-		Use:   "export [集合名称] [输出文件]",
+		Use:   "export [集合名称]",
 		Short: "导出指定集合的数据到JSON文件",
 		Long:  `将指定集合的所有记录导出到JSON文件。支持大数据量分批处理。`,
-		Args:  cobra.ExactArgs(2),
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			collectionName := args[0]
-			outputFile := args[1]
+
+			// 如果没有指定输出文件，使用默认名称
+			if outputFile == "" {
+				outputFile = fmt.Sprintf("%s_export.json", collectionName)
+			}
+
 			return exportData(app, collectionName, outputFile, pretty, batchSize)
 		},
 	}
 
-	// 添加格式化输出的标志
+	// 添加标志
 	cmd.Flags().BoolVarP(&pretty, "pretty", "p", false, "是否格式化JSON输出")
 	cmd.Flags().IntVarP(&batchSize, "batch-size", "b", 5000, "每批保存的记录数，默认5000")
+	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "输出文件路径（默认为：集合名称_export.json）")
 
 	return cmd
 }
