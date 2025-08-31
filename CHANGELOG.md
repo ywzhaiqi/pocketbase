@@ -1,3 +1,35 @@
+## v0.29.3
+
+- Try to forward Apple OAuth2 POST redirect user's name so that it can be returned (and eventually assigned) with the success response of the all-in-one auth call ([#7090](https://github.com/pocketbase/pocketbase/issues/7090)).
+
+- Fixed `RateLimitRule.Audience` code comment ([#7098](https://github.com/pocketbase/pocketbase/pull/7098); thanks @iustin05).
+
+- Mocked `syscall.Exec` when building for WASM ([#7116](https://github.com/pocketbase/pocketbase/pull/7116); thanks @joas8211).
+    _Note that WASM is not officially supported PocketBase build target and many things may not work as expected._
+
+- Registered missing `$filesystem`, `$mails`, `$template` and `__hooks` bindings in the JSVM migrations ([#7125](https://github.com/pocketbase/pocketbase/issues/7125)).
+
+- Regenerated JSVM types to include methods from structs with single generic parameter.
+
+- Updated Go dependencies.
+
+
+## v0.29.2
+
+- Bumped min Go GitHub action version to 1.23.12 since it comes with some [minor fixes for the runtime and `database/sql` package](https://github.com/golang/go/issues?q=milestone%3AGo1.23.12+label%3ACherryPickApproved).
+
+
+## v0.29.1
+
+- Updated the X/Twitter provider to return the `confirmed_email` field and to use the `x.com` domain ([#7035](https://github.com/pocketbase/pocketbase/issues/7035)).
+
+- Added Box.com OAuth2 provider ([#7056](https://github.com/pocketbase/pocketbase/pull/7056); thanks @blakepatteson).
+
+- Updated `modernc.org/sqlite` to 1.38.2 (SQLite 3.50.3).
+
+- Fixed example List API response ([#7049](https://github.com/pocketbase/pocketbase/pull/7049); thanks @williamtguerra).
+
+
 ## v0.29.0
 
 - Enabled calling the `/auth-refresh` endpoint with nonrenewable tokens.
@@ -6,8 +38,6 @@
 - Added the triggered rate rimit rule in the error log `details`.
 
 - Added optional `ServeEvent.Listener` field to initialize a custom network listener (e.g. `unix`) instead of the default `tcp` ([#3233](https://github.com/pocketbase/pocketbase/discussions/3233)).
-
-- Added `toBytes` JSVM helper ([#6935](https://github.com/pocketbase/pocketbase/issues/6935)).
 
 - Fixed request data unmarshalization for the `DynamicModel` array/object fields ([#7022](https://github.com/pocketbase/pocketbase/discussions/7022)).
 
@@ -18,7 +48,7 @@
 
 ## v0.28.4
 
-- Added global JSVM `toBytes()` helper to return the bytes slice representation of a value such as io.Reader or string (_other types are first serialized to Go string_).
+- Added global JSVM `toBytes()` helper to return the bytes slice representation of a value such as io.Reader or string, _other types are first serialized to Go string_ ([#6935](https://github.com/pocketbase/pocketbase/issues/6935)).
 
 - Fixed `security.RandomStringByRegex` random distribution ([#6947](https://github.com/pocketbase/pocketbase/pull/6947); thanks @yerTools).
 
