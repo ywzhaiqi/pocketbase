@@ -1,0 +1,39 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  BINARY_NAME: pocketbase
+  BUILD_FLAGS: -ldflags "-s -w"
+
+tasks:
+  build:
+    desc: Build for all platforms
+    cmds:
+      - task: build-linux
+      - task: build-windows
+      # - task: build-darwin
+
+  build-linux:
+    desc: Build for Linux AMD64
+    env:
+      GOOS: linux
+      GOARCH: amd64
+    cmds:
+      - mkdir -p .builds/{{.BINARY_NAME}}-linux-amd64
+      - go build {{.BUILD_FLAGS}} -o .builds/{{.BINARY_NAME}}-linux-amd64/{{.BINARY_NAME}} examples/base/main.go
+  
+  build-windows:
+    desc: Build for Windows AMD64
+    env:
+      GOOS: windows
+      GOARCH: amd64
+    cmds:
+      - mkdir -p .builds/{{.BINARY_NAME}}-windows-amd64
+      - go build {{.BUILD_FLAGS}} -o .builds/{{.BINARY_NAME}}-windows-amd64/{{.BINARY_NAME}}.exe examples/base/main.go
+
+  build-ui:
+    desc: Build UI assets
+    dir: web/ui
+    cmds:
+      - npm run build
