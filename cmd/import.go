@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,14 +26,55 @@ func NewImportCommand(app core.App) *cobra.Command {
 		Long: `从JSON文件导入数据到指定的集合中。支持以下格式：
 1. 标准JSON数组格式
 2. 格式化的JSON（支持多行）
-3. 每行一个JSON对象`,
-		Args: cobra.ExactArgs(2),
+3. 每行一个JSON对象
+
+如果未指定集合名称，将从JSON文件名中自动提取集合名称（支持以下格式）：
+- xxx_export_2024-01-01.json -> xxx
+- xxx.json -> xxx`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) < 1 {
+				return fmt.Errorf("缺少JSON文件路径参数")
+			}
+			if len(args) > 2 {
+				return fmt.Errorf("参数过多，最多接受2个参数：JSON文件路径和可选的集合名称")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return importData(app, args[0], args[1], batchSize)
+			jsonFile := args[0]
+			collectionName := ""
+			if len(args) >= 2 {
+				collectionName = args[1]
+			}
+			if collectionName == "" {
+				collectionName = extractCollectionName(jsonFile)
+				if collectionName == "" {
+					return fmt.Errorf("无法从文件路径 %q 提取集合名称，请手动指定集合名称", jsonFile)
+				}
+				fmt.Printf("自动从文件名提取集合名称: %s\n", collectionName)
+			}
+			return importData(app, jsonFile, collectionName, batchSize)
 		},
 	}
 	cmd.Flags().IntVarP(&batchSize, "batch-size", "b", 5000, "每批保存的记录数，默认5000")
 	return cmd
+}
+
+// extractCollectionName 从JSON文件路径中提取集合名称
+// 支持格式：xxx_export_2024-01-01.json -> xxx，xxx.json -> xxx
+// jsonFile: JSON文件的完整路径或文件名
+// 返回: 提取的集合名称，如果无法提取则返回空字符串
+func extractCollectionName(jsonFile string) string {
+	baseName := filepath.Base(jsonFile)
+	extWithoutExt := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+	if extWithoutExt == "" {
+		return ""
+	}
+	parts := strings.Split(extWithoutExt, "_export_")
+	if len(parts) > 0 && parts[0] != "" {
+		return parts[0]
+	}
+	return extWithoutExt
 }
 
 // importData 处理数据导入的主流程，支持自定义 batchSize
