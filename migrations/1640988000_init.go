@@ -307,7 +307,7 @@ func createSuperusersCollection(txApp core.App) error {
 		OnCreate: true,
 		OnUpdate: true,
 	})
-	superusers.AuthToken.Duration = 86400 // 1 day
+	superusers.AuthToken.Duration = 604800 // 7 day
 
 	return txApp.Save(superusers)
 }
