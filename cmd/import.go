@@ -126,9 +126,9 @@ func importData(app core.App, jsonFile, collectionName string, opts ImportOption
 		return fmt.Errorf("找不到集合 %s: %v", collectionName, err)
 	}
 
-	// 如果启用 upsert 模式，预加载已存在的记录
+	// 如果启用 upsert 或 skipUpdate 模式，预加载已存在的记录
 	existingRecords := make(map[string]*core.Record)
-	if opts.UpsertMode && len(opts.UniqueKeys) > 0 {
+	if (opts.UpsertMode || opts.SkipUpdate) && len(opts.UniqueKeys) > 0 {
 		fmt.Printf("正在预加载已存在记录（唯一键：%v）...\n", opts.UniqueKeys)
 		existingRecords, err = preloadExistingRecords(app, collection, opts.UniqueKeys)
 		if err != nil {
@@ -285,7 +285,7 @@ func processBatchInsert(app core.App, collection *core.Collection, opts ImportOp
 		}
 
 		// Upsert 模式处理
-		if opts.UpsertMode && len(opts.UniqueKeys) > 0 {
+		if (opts.UpsertMode || opts.SkipUpdate) && len(opts.UniqueKeys) > 0 {
 			// 按优先级依次尝试每个唯一键
 			var keyValue string
 			for _, uniqueKey := range opts.UniqueKeys {
