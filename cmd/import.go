@@ -23,6 +23,7 @@ type ImportOptions struct {
 	UpsertMode bool     // 是否启用upsert模式
 	SkipUpdate bool     // 是否跳过已有记录的更新
 	BatchSize  int      // 每批保存的记录数
+	Truncate   bool
 }
 
 // NewImportCommand 创建导入命令
@@ -32,6 +33,7 @@ func NewImportCommand(app core.App) *cobra.Command {
 		uniqueKeys string
 		upsertMode bool
 		skipUpdate bool
+		truncate   bool
 	)
 
 	cmd := &cobra.Command{
@@ -49,7 +51,8 @@ func NewImportCommand(app core.App) *cobra.Command {
 重复数据处理选项：
 - --unique-key (-k): 指定唯一键字段，用于判断重复记录（支持多个，用逗号分隔，优先使用第一个存在的字段）
 - --upsert (-u): 启用upsert模式，存在则更新，不存在则新增
-- --skip-update (-s): 跳过已有记录的更新（仅新增）`,
+- --skip-update (-s): 跳过已有记录的更新（仅新增）
+- --truncate (-t): 导入前清空集合中的所有记录`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 1 {
 				return fmt.Errorf("缺少JSON文件路径参数")
@@ -86,6 +89,7 @@ func NewImportCommand(app core.App) *cobra.Command {
 				UpsertMode: upsertMode,
 				SkipUpdate: skipUpdate,
 				BatchSize:  batchSize,
+				Truncate:   truncate,
 			}
 			return importData(app, jsonFile, collectionName, importOptions)
 		},
@@ -94,6 +98,7 @@ func NewImportCommand(app core.App) *cobra.Command {
 	cmd.Flags().StringVarP(&uniqueKeys, "unique-key", "k", "", "唯一键字段名，用于判断重复记录（支持多个，用逗号分隔，如：id,username,email）")
 	cmd.Flags().BoolVarP(&upsertMode, "upsert", "u", false, "启用upsert模式：存在则更新，不存在则新增")
 	cmd.Flags().BoolVarP(&skipUpdate, "skip-update", "s", false, "跳过已有记录的更新（仅新增记录）")
+	cmd.Flags().BoolVarP(&truncate, "truncate", "t", false, "导入前清空集合中的所有记录")
 	return cmd
 }
 
@@ -126,15 +131,22 @@ func importData(app core.App, jsonFile, collectionName string, opts ImportOption
 		return fmt.Errorf("找不到集合 %s: %v", collectionName, err)
 	}
 
-	// 如果启用 upsert 或 skipUpdate 模式，预加载已存在的记录
 	existingRecords := make(map[string]*core.Record)
-	if (opts.UpsertMode || opts.SkipUpdate) && len(opts.UniqueKeys) > 0 {
-		fmt.Printf("正在预加载已存在记录（唯一键：%v）...\n", opts.UniqueKeys)
-		existingRecords, err = preloadExistingRecords(app, collection, opts.UniqueKeys)
-		if err != nil {
-			return fmt.Errorf("预加载已存在记录失败: %v", err)
+	if opts.Truncate {
+		fmt.Printf("正在清空集合 %s 中的所有记录...\n", collection.Name)
+		if err = app.TruncateCollection(collection); err != nil {
+			return fmt.Errorf("清空集合 %s 失败: %v", collectionName, err)
 		}
-		fmt.Printf("已加载 %d 条已存在记录\n", len(existingRecords))
+		fmt.Printf("集合 %s 已清空\n", collection.Name)
+	} else {
+		if (opts.UpsertMode || opts.SkipUpdate) && len(opts.UniqueKeys) > 0 {
+			fmt.Printf("正在预加载已存在记录（唯一键：%v）...\n", opts.UniqueKeys)
+			existingRecords, err = preloadExistingRecords(app, collection, opts.UniqueKeys)
+			if err != nil {
+				return fmt.Errorf("预加载已存在记录失败: %v", err)
+			}
+			fmt.Printf("已加载 %d 条已存在记录\n", len(existingRecords))
+		}
 	}
 
 	file, err := os.Open(jsonFile)
