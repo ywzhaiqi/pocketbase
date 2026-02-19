@@ -207,6 +207,7 @@ func preloadExistingRecords(app core.App, collection *core.Collection, uniqueKey
 // importJSONArray 流式导入标准JSON数组
 func importJSONArray(app core.App, reader *bufio.Reader, collection *core.Collection, opts ImportOptions, existingRecords map[string]*core.Record) error {
 	dec := json.NewDecoder(reader)
+	unknownFields := make(map[string]struct{})
 	t, err := dec.Token()
 	if err != nil {
 		return fmt.Errorf("读取JSON文件头失败: %v", err)
@@ -223,10 +224,28 @@ func importJSONArray(app core.App, reader *bufio.Reader, collection *core.Collec
 		if err := dec.Decode(&item); err != nil {
 			return nil, false, fmt.Errorf("解析JSON对象失败: %v", err)
 		}
-		record := mapToRecord(item, collection)
+		record := mapToRecord(item, collection, func(field string) {
+			if _, exists := unknownFields[field]; exists {
+				return
+			}
+			unknownFields[field] = struct{}{}
+		})
 		return record, false, nil
 	}
-	return processBatchInsert(app, collection, opts, existingRecords, recordGenerator)
+
+	if err := processBatchInsert(app, collection, opts, existingRecords, recordGenerator); err != nil {
+		return err
+	}
+
+	if len(unknownFields) > 0 {
+		fields := make([]string, 0, len(unknownFields))
+		for f := range unknownFields {
+			fields = append(fields, f)
+		}
+		fmt.Printf("警告: 导入字段在集合中不存在，collection=%s, fields=%s\n", collection.Name, strings.Join(fields, ","))
+	}
+
+	return nil
 }
 
 // importJSONLines 流式导入每行一个JSON对象
@@ -234,6 +253,7 @@ func importJSONLines(app core.App, reader *bufio.Reader, collection *core.Collec
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, maxLineSize), maxLineSize)
 	lineNum := 0
+	unknownFields := make(map[string]struct{})
 	recordGenerator := func() (*core.Record, bool, error) {
 		for scanner.Scan() {
 			lineNum++
@@ -250,7 +270,12 @@ func importJSONLines(app core.App, reader *bufio.Reader, collection *core.Collec
 				fmt.Printf("第%d行解析失败: %v，已跳过\n", lineNum, err)
 				continue
 			}
-			record := mapToRecord(item, collection)
+			record := mapToRecord(item, collection, func(field string) {
+				if _, exists := unknownFields[field]; exists {
+					return
+				}
+				unknownFields[field] = struct{}{}
+			})
 			return record, false, nil
 		}
 		if err := scanner.Err(); err != nil {
@@ -258,7 +283,20 @@ func importJSONLines(app core.App, reader *bufio.Reader, collection *core.Collec
 		}
 		return nil, true, nil
 	}
-	return processBatchInsert(app, collection, opts, existingRecords, recordGenerator)
+
+	if err := processBatchInsert(app, collection, opts, existingRecords, recordGenerator); err != nil {
+		return err
+	}
+
+	if len(unknownFields) > 0 {
+		fields := make([]string, 0, len(unknownFields))
+		for f := range unknownFields {
+			fields = append(fields, f)
+		}
+		fmt.Printf("警告: 导入字段在集合中不存在，collection=%s, fields=%s\n", collection.Name, strings.Join(fields, ","))
+	}
+
+	return nil
 }
 
 // processBatchInsert 通用批量插入逻辑，支持 upsert 模式
@@ -410,14 +448,28 @@ func saveRecordsBatch(app core.App, records []*core.Record, batchNum, totalCount
 // item: 原始数据map
 // collection: 目标集合
 // 返回: *core.Record
-func mapToRecord(item map[string]any, collection *core.Collection) *core.Record {
+func mapToRecord(item map[string]any, collection *core.Collection, onUnknownField func(field string)) *core.Record {
 	record := core.NewRecord(collection)
+
+	knownFields := make(map[string]struct{}, len(collection.Fields)+3)
+	for _, f := range collection.Fields {
+		knownFields[f.GetName()] = struct{}{}
+	}
+	knownFields["id"] = struct{}{}
+	knownFields["created"] = struct{}{}
+	knownFields["updated"] = struct{}{}
+
 	for key, value := range item {
 		if key == "created" || key == "updated" {
 			record.SetRaw(key, value)
 		} else {
 			record.Set(key, value)
 		}
+
+		if _, ok := knownFields[key]; !ok && onUnknownField != nil {
+			onUnknownField(key)
+		}
 	}
+
 	return record
 }
