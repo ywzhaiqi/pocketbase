@@ -50,6 +50,19 @@
         Bind(Gzip())
     ```
 2. 添加执行 JavaScript 文件命令。`./pocketbase js XXX.js`
+3. 管理员后台登录改为 7 天（ 604800 秒）。以前的用下面改数据库
+   ```sql
+   UPDATE _collections
+   SET options = json_set(options, '$.authToken.duration', 604800)
+   WHERE name = '_superusers';
+   ```
+   查看数据库是否修改成功
+   ```sql
+   SELECT json_extract(options, '$.authToken.duration')
+   FROM _collections
+   WHERE name = '_superusers';
+   ```
+
 
 
 ## API SDK clients
