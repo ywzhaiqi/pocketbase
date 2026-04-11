@@ -1,15 +1,20 @@
 package apis
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
+	"path"
 	"strings"
+	"syscall"
 	"time"
 
 	validation "github.com/go-ozzo/ozzo-validation/v4"
@@ -18,6 +23,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/auth"
 	"github.com/pocketbase/pocketbase/tools/dbutils"
 	"github.com/pocketbase/pocketbase/tools/filesystem"
+	"github.com/pocketbase/pocketbase/tools/inflector"
 	"golang.org/x/oauth2"
 )
 
@@ -213,16 +219,31 @@ func (form *recordOAuth2LoginForm) checkProviderName(value any) error {
 	return nil
 }
 
+// @todo evaluate if it is still worth keeping as this exists only for backward-compatibility with pre v0.23 versions
 func oldCanAssignUsername(txApp core.App, collection *core.Collection, username string) bool {
+	field := collection.Fields.GetByName(collection.OAuth2.MappedFields.Username)
+	if field == nil {
+		return false
+	}
+
+	// ensure that the value matches the pattern of the username field (if text)
+	if txtField, ok := field.(*core.TextField); ok && txtField.ValidatePlainValue(username) != nil {
+		return false
+	}
+
 	// ensure that username is unique
-	index, hasUniqueue := dbutils.FindSingleColumnUniqueIndex(collection.Indexes, collection.OAuth2.MappedFields.Username)
+	index, hasUniqueue := dbutils.FindSingleColumnUniqueIndex(collection.Indexes, field.GetName())
 	if hasUniqueue {
+		// it is not required because collection fields are already sanitized
+		// but normalize as an extra precaution in case of a custom validator
+		colName := inflector.Columnify(field.GetName())
+
 		var expr dbx.Expression
 		if strings.EqualFold(index.Columns[0].Collate, "nocase") {
 			// case-insensitive search
-			expr = dbx.NewExp("username = {:username} COLLATE NOCASE", dbx.Params{"username": username})
+			expr = dbx.NewExp("[["+colName+"]] = {:username} COLLATE NOCASE", dbx.Params{"username": username})
 		} else {
-			expr = dbx.HashExp{"username": username}
+			expr = dbx.HashExp{colName: username}
 		}
 
 		var exists int
@@ -232,10 +253,7 @@ func oldCanAssignUsername(txApp core.App, collection *core.Collection, username 
 		}
 	}
 
-	// ensure that the value matches the pattern of the username field (if text)
-	txtField, _ := collection.Fields.GetByName(collection.OAuth2.MappedFields.Username).(*core.TextField)
-
-	return txtField != nil && txtField.ValidatePlainValue(username) == nil
+	return true
 }
 
 func oauth2Submit(e *core.RecordAuthWithOAuth2RequestEvent, optExternalAuth *core.ExternalAuth) error {
@@ -281,9 +299,12 @@ func oauth2Submit(e *core.RecordAuthWithOAuth2RequestEvent, optExternalAuth *cor
 				if mappedField != nil && mappedField.Type() == core.FieldTypeFile {
 					// download the avatar if the mapped field is a file
 					avatarFile, err := func() (*filesystem.File, error) {
-						ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 						defer cancel()
-						return filesystem.NewFileFromURL(ctx, e.OAuth2User.AvatarURL)
+
+						// the extra checks are not required because the OAuth2 APIs are trusted vendor
+						// but are here to minimize the impact in case the provider is vulnerable
+						return safeFileFromURL(ctx, e.OAuth2User.AvatarURL)
 					}()
 					if err != nil {
 						txApp.Logger().Warn("Failed to retrieve OAuth2 avatar", slog.String("error", err.Error()))
@@ -385,4 +406,89 @@ func sendOAuth2RecordCreateRequest(txApp core.App, e *core.RecordAuthWithOAuth2R
 	}
 
 	return createdRecord, nil
+}
+
+// -------------------------------------------------------------------
+
+// safeHTTPClient initializes a custom http.Client with extra host checks
+// to prevent internal network probing requests
+// (aka. disallow loopback, private, multicast, etc. requests).
+//
+// NB! The host checks are not perfect and there are probably edge cases that are not covered,
+// so if you plan using with untrusted user URL, consider performing additional whitelist checks.
+//
+// @todo Evaluate with the refactoring if worth exporting(+tests) and moving under the security package.
+func safeHTTPClient() *http.Client {
+	dialer := &net.Dialer{
+		// the same options as in http.DefaultTransport.DialContext
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+
+		// check the address right after estrablishing the connection to prevent dns rebinding
+		Control: func(network, address string, c syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+
+			ip := net.ParseIP(host)
+
+			if ip == nil ||
+				ip.IsLoopback() ||
+				ip.IsUnspecified() ||
+				ip.IsPrivate() ||
+				ip.IsLinkLocalUnicast() ||
+				ip.IsLinkLocalMulticast() ||
+				ip.IsMulticast() {
+				return fmt.Errorf("address %q is invalid or resolve to disallowed IP", address)
+			}
+
+			return nil
+		},
+	}
+
+	return &http.Client{
+		Timeout: 180 * time.Second, // can be still cancelled with the request context
+		Transport: &http.Transport{
+			DialContext: dialer.DialContext,
+			// the same options as in http.DefaultTransport
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
+}
+
+// safeFileFromURL downloads the file from the specified url (using safeHTTPClient)
+// and creates a new filesystem.File value from its content (limited to DefaultMaxBodySize).
+//
+// @todo Evaluate with the refactoring if worth exporting/replacing filesystem.NewFileFromURL (or redefine as NewUnsafeFileFromURL).
+func safeFileFromURL(ctx context.Context, url string) (*filesystem.File, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	client := safeHTTPClient()
+
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode < 200 || res.StatusCode > 399 {
+		return nil, fmt.Errorf("failed to download url %s (%d)", url, res.StatusCode)
+	}
+
+	body := io.LimitReader(res.Body, DefaultMaxBodySize)
+
+	var buf bytes.Buffer
+	if _, err = io.Copy(&buf, body); err != nil {
+		return nil, err
+	}
+
+	return filesystem.NewFileFromBytes(buf.Bytes(), path.Base(url))
 }
